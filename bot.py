@@ -113,18 +113,6 @@ async def _handle_replay(message: discord.Message, attachment: discord.Attachmen
                 mention_author=False,
             )
 
-            # If there are extra charts beyond the embed image, send as follow-up
-            if len(files) > 1:
-                extra_files = [
-                    discord.File(p, filename=p.name)
-                    for p in chart_paths[1:]
-                ]
-                await message.channel.send(
-                    content="📊 Additional charts:",
-                    files=extra_files,
-                    reference=message,
-                )
-
         except FileNotFoundError as exc:
             log.error(f"screp binary missing: {exc}")
             await message.reply(
