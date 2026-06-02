@@ -32,6 +32,17 @@ class BuildOrderEntry:
 
 
 @dataclass
+class HotkeyStats:
+    """Lightweight summary of a player's control-group usage."""
+    # group number (0-9) -> label "Army" / "Production" / "Mixed" / "Unused"
+    group_roles: dict[int, str] = field(default_factory=dict)
+    # how many times the player double-tapped any hotkey to snap camera
+    camera_snaps: int = 0
+    # total hotkey selects (single taps that changed selection)
+    total_selects: int = 0
+
+
+@dataclass
 class PlayerStats:
     name: str
     race: str
@@ -40,6 +51,7 @@ class PlayerStats:
     eapm: int
     build_order: list[BuildOrderEntry] = field(default_factory=list)
     apm_timeline: list[tuple[float, int]] = field(default_factory=list)
+    hotkeys: HotkeyStats = field(default_factory=HotkeyStats)
 
 
 @dataclass
@@ -186,6 +198,94 @@ def _apm_timeline_from_cmds(commands: list, total_frames: int) -> list[tuple[flo
 
 
 
+# Command-type classification for hotkey role detection
+_PRODUCTION_ACTIONS = frozenset({
+    "Train", "Build", "Research", "Upgrade",
+    "Building Morph", "Unit Morph", "Morph",
+})
+_ARMY_ACTIONS = frozenset({
+    "Right Click", "Targeted Order", "Stop", "Hold Position",
+    "Attack", "Attack Move", "Use Magic", "Move",
+})
+
+# Double-tap (camera snap) threshold in frames (~500ms at 23.81 fps)
+_DOUBLE_TAP_FRAMES = 12
+
+
+def _analyze_hotkeys(commands: list) -> HotkeyStats:
+    """
+    Single-pass analysis of one player's commands.
+
+    Tallies army vs production actions per control group by looking at the
+    command issued immediately after each Hotkey-Select, and counts camera
+    snaps (rapid double-taps of the same group).
+
+    Only a small fixed-size HotkeyStats summary is returned — the raw command
+    list is never copied or retained.
+    """
+    # group -> [army_tally, production_tally]
+    tallies: dict[int, list[int]] = {g: [0, 0] for g in range(10)}
+
+    last_selected_group: int | None = None   # set by a Hotkey-Select, consumed by next cmd
+    last_select_frame: dict[int, int] = {}    # group -> frame of its previous select
+    camera_snaps = 0
+    total_selects = 0
+
+    for cmd in commands:
+        if not isinstance(cmd, dict):
+            continue
+
+        ctype = _safe_get(cmd, "Type", "Name") or ""
+
+        if ctype == "Hotkey":
+            hk_action = _safe_get(cmd, "HotkeyType", "Name") or ""
+            group = cmd.get("Group", -1)
+            frame = cmd.get("Frame", 0)
+
+            if hk_action == "Select":
+                total_selects += 1
+                # Camera snap: same group selected again within the threshold
+                prev = last_select_frame.get(group)
+                if prev is not None and (frame - prev) <= _DOUBLE_TAP_FRAMES:
+                    camera_snaps += 1
+                last_select_frame[group] = frame
+                # Arm the action-pair detector for the next command
+                last_selected_group = group
+            else:
+                # Assign / Add — not a selection, clear the pending pair
+                last_selected_group = None
+            continue
+
+        # If the previous command was a Hotkey-Select, this command reveals
+        # what that group is used for.
+        if last_selected_group is not None and 0 <= last_selected_group <= 9:
+            if ctype in _PRODUCTION_ACTIONS:
+                tallies[last_selected_group][1] += 1
+            elif ctype in _ARMY_ACTIONS:
+                tallies[last_selected_group][0] += 1
+            # Consume the pairing regardless so we only judge the immediate next cmd
+            last_selected_group = None
+
+    # Resolve each group's role from its tallies
+    group_roles: dict[int, str] = {}
+    for group, (army, prod) in tallies.items():
+        total = army + prod
+        if total == 0:
+            continue  # unused — omit from summary
+        if army >= prod * 4:
+            group_roles[group] = "Army"
+        elif prod >= army * 4:
+            group_roles[group] = "Production"
+        else:
+            group_roles[group] = "Mixed"
+
+    return HotkeyStats(
+        group_roles=group_roles,
+        camera_snaps=camera_snaps,
+        total_selects=total_selects,
+    )
+
+
 def _determine_winner(players_raw: list, flat_cmds: list = None) -> Optional[int]:
     # First try: use the Result field screp may provide
     for i, p in enumerate(players_raw):
@@ -305,6 +405,7 @@ def _parse_screp_json(data: dict) -> ReplayData:
         cmds = commands_by_player.get(player_id) or commands_by_player.get(i, [])
         build_order  = _build_order_from_cmds(cmds)
         apm_timeline = _apm_timeline_from_cmds(cmds, total_frames)
+        hotkeys      = _analyze_hotkeys(cmds)
 
         players.append(PlayerStats(
             name=p.get("Name", f"Player {i + 1}"),
@@ -314,6 +415,7 @@ def _parse_screp_json(data: dict) -> ReplayData:
             eapm=eapm,
             build_order=build_order,
             apm_timeline=apm_timeline,
+            hotkeys=hotkeys,
         ))
 
     matchup = "v".join(races) if len(races) == 2 else "?v?"
