@@ -1,35 +1,39 @@
 """
-visualizer.py — Generates chart images from ReplayData.
+visualizer.py — Generates chart images and minimap from ReplayData.
 
 Returns file Paths so bot.py can attach them to Discord messages.
 Caller is responsible for deleting temp files after sending.
 """
 
 import asyncio
+import logging
+import os
+import subprocess
 from pathlib import Path
 
 import matplotlib
-matplotlib.use("Agg")           # Non-interactive backend — safe for bots
-matplotlib.rcParams["font.family"] = "DejaVu Sans"  # Skip font cache scan
+matplotlib.use("Agg")
+matplotlib.rcParams["font.family"] = "DejaVu Sans"
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
+from PIL import Image, ImageDraw, ImageFont
 
-from config import CHART_DPI, CHART_STYLE, PLAYER_COLORS, TEMP_DIR
-from parser import ReplayData, PlayerStats
+from config import CHART_DPI, PLAYER_COLORS, SCREP_BINARY, TEMP_DIR
+from parser import ReplayData
 
+log = logging.getLogger("sc-replay-bot")
 
 # ---------------------------------------------------------------------------
 # Shared style helpers
 # ---------------------------------------------------------------------------
 
-BG_COLOR = "#0d1117"
-GRID_COLOR = "#21262d"
-TEXT_COLOR = "#e6edf3"
+BG_COLOR     = "#0d1117"
+GRID_COLOR   = "#21262d"
+TEXT_COLOR   = "#e6edf3"
 ACCENT_COLOR = "#30363d"
 
 
 def _apply_base_style(ax: plt.Axes, title: str) -> None:
-    """Apply consistent dark StarCraft-themed style to an axes object."""
     ax.set_facecolor(BG_COLOR)
     ax.set_title(title, color=TEXT_COLOR, fontsize=13, fontweight="bold", pad=12)
     ax.tick_params(colors=TEXT_COLOR, labelsize=9)
@@ -41,7 +45,6 @@ def _apply_base_style(ax: plt.Axes, title: str) -> None:
 
 
 def _minutes_formatter(x, _):
-    """Format x-axis tick labels as mm:ss."""
     m, s = divmod(int(x), 60)
     return f"{m}:{s:02d}"
 
@@ -89,67 +92,134 @@ def _chart_apm(replay: ReplayData, uid: str) -> Path | None:
 
 
 # ---------------------------------------------------------------------------
-# Build order timeline chart
+# Minimap with spawn location overlay
 # ---------------------------------------------------------------------------
 
-def _chart_build_order(replay: ReplayData, uid: str) -> Path | None:
-    """Horizontal timeline of build-order actions per player."""
-    players_with_bo = [p for p in replay.players if p.build_order]
-    if not players_with_bo:
+# Match PLAYER_COLORS from config — blue for player 1, red for player 2
+SPAWN_COLORS = ["#4fc3f7", "#ef5350"]
+
+
+def _generate_minimap(replay: ReplayData, rep_path: Path, uid: str) -> Path | None:
+    """
+    1. Call screp -map to extract the raw minimap PNG from the replay file.
+    2. Upscale it to ~512px on the longer side.
+    3. Draw a coloured circle + player name at each spawn location.
+    4. Return the composited PNG path.
+    """
+    raw_map_path = TEMP_DIR / f"minimap_raw_{uid}.png"
+    out_path     = TEMP_DIR / f"minimap_{uid}.png"
+
+    # ── Step 1: extract raw minimap ─────────────────────────────────────────
+    try:
+        os.chmod(SCREP_BINARY, 0o755)
+    except Exception:
+        pass
+
+    try:
+        result = subprocess.run(
+            [str(SCREP_BINARY), f"-map={raw_map_path}", str(rep_path)],
+            capture_output=True,
+            timeout=30,
+        )
+        if not raw_map_path.exists():
+            log.warning(f"screp -map produced no file. stderr: {result.stderr[:300]}")
+            return None
+    except Exception as e:
+        log.warning(f"screp -map failed: {e}")
         return None
 
-    n_players = len(players_with_bo)
-    fig, axes = plt.subplots(
-        n_players, 1,
-        figsize=(10, 3 * n_players),
-        sharex=False,
-    )
-    fig.patch.set_facecolor(BG_COLOR)
+    # ── Step 2: open and upscale ─────────────────────────────────────────────
+    try:
+        img = Image.open(raw_map_path).convert("RGBA")
+    except Exception as e:
+        log.warning(f"Could not open raw minimap: {e}")
+        raw_map_path.unlink(missing_ok=True)
+        return None
 
-    if n_players == 1:
-        axes = [axes]
+    orig_w, orig_h = img.size
+    map_w = replay.map_width  or orig_w
+    map_h = replay.map_height or orig_h
+    log.info(f"Raw minimap: {orig_w}x{orig_h}px  map tiles: {map_w}x{map_h}")
 
-    for ax, player, color in zip(axes, players_with_bo, PLAYER_COLORS):
-        times = [e.time_seconds for e in player.build_order]
-        names = [e.name for e in player.build_order]
-        y_pos = [0] * len(times)
+    TARGET = 512
+    scale  = TARGET / max(map_w, map_h)
+    new_w  = max(1, int(map_w * scale))
+    new_h  = max(1, int(map_h * scale))
+    img    = img.resize((new_w, new_h), Image.NEAREST)
+    draw   = ImageDraw.Draw(img)
 
-        ax.scatter(times, y_pos, color=color, s=120, zorder=3)
+    # ── Step 3: load font ────────────────────────────────────────────────────
+    font_paths = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+    ]
+    font = None
+    for fp in font_paths:
+        try:
+            font = ImageFont.truetype(fp, 14)
+            break
+        except Exception:
+            continue
+    if font is None:
+        font = ImageFont.load_default()
 
-        for t, name in zip(times, names):
-            ax.annotate(
-                name,
-                xy=(t, 0),
-                xytext=(0, 18),
-                textcoords="offset points",
-                ha="center",
-                fontsize=7.5,
-                color=TEXT_COLOR,
-                rotation=30,
-                arrowprops=dict(arrowstyle="-", color=color, lw=0.8),
-            )
+    # ── Step 4: draw spawn markers ───────────────────────────────────────────
+    for i, player in enumerate(replay.players):
+        sx, sy = player.spawn_x, player.spawn_y
+        if sx == 0 and sy == 0:
+            log.info(f"Player {player.name} has no spawn location — skipping marker")
+            continue
 
-        _apply_base_style(ax, f"{player.name} ({player.race}) — Build Order")
-        ax.xaxis.set_major_formatter(ticker.FuncFormatter(_minutes_formatter))
-        ax.set_yticks([])
-        ax.set_xlabel("Game Time")
-        ax.set_xlim(left=-10)
-        ax.set_ylim(-0.5, 1.0)
-        ax.spines["left"].set_visible(False)
+        color = SPAWN_COLORS[i % len(SPAWN_COLORS)]
 
-    fig.tight_layout(pad=2.0)
-    return _save_fig(fig, f"bo_{uid}.png")
+        # Convert tile coords to pixel coords in the upscaled image
+        # screp gives StartLocation in tiles; the raw minimap is 1px per tile
+        px = int(sx * scale)
+        py = int(sy * scale)
+        px = max(12, min(new_w - 12, px))
+        py = max(12, min(new_h - 12, py))
+
+        log.info(f"Drawing spawn for {player.name} at tile ({sx},{sy}) → px ({px},{py})")
+
+        r = 10
+        # White outline for contrast on any background
+        draw.ellipse([px - r - 2, py - r - 2, px + r + 2, py + r + 2],
+                     fill="white", outline="white")
+        # Coloured fill
+        draw.ellipse([px - r, py - r, px + r, py + r],
+                     fill=color, outline=color)
+
+        # Name label with black drop-shadow for legibility
+        label  = player.name
+        tx, ty = px + r + 4, py - 8
+        draw.text((tx + 1, ty + 1), label, fill="black", font=font)
+        draw.text((tx,     ty),     label, fill="white", font=font)
+
+    # ── Step 5: save and clean up ────────────────────────────────────────────
+    try:
+        img.convert("RGB").save(out_path, "PNG")
+        raw_map_path.unlink(missing_ok=True)
+        log.info(f"Minimap saved: {out_path}")
+        return out_path
+    except Exception as e:
+        log.warning(f"Could not save composited minimap: {e}")
+        raw_map_path.unlink(missing_ok=True)
+        return None
 
 
 # ---------------------------------------------------------------------------
-# Public async entry-point
+# Public async entry-points
 # ---------------------------------------------------------------------------
 
 async def generate_charts(replay: ReplayData, uid: str) -> list[Path]:
-    """
-    Generate the APM chart and return its path.
-    Runs matplotlib in a thread pool so the Discord event loop stays free.
-    """
+    """Generate the APM chart. Runs in a thread pool to keep Discord loop free."""
     loop = asyncio.get_event_loop()
     apm_path = await loop.run_in_executor(None, _chart_apm, replay, uid)
     return [apm_path] if apm_path is not None else []
+
+
+async def generate_minimap(replay: ReplayData, rep_path: Path, uid: str) -> Path | None:
+    """Generate the minimap with spawn overlays. Runs in a thread pool."""
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, _generate_minimap, replay, rep_path, uid)

@@ -98,14 +98,21 @@ async def _handle_replay(message: discord.Message, attachment: discord.Attachmen
                 f"({replay.duration_str})"
             )
 
-            # 3. Generate charts (lazy import to avoid startup memory spike)
+            # 3. Generate charts + minimap (lazy import to avoid startup memory spike)
             log.info("Generating charts…")
-            from visualizer import generate_charts
+            from visualizer import generate_charts, generate_minimap
             chart_paths = await generate_charts(replay, uid)
             log.info(f"Generated {len(chart_paths)} chart(s)")
 
+            log.info("Generating minimap…")
+            minimap_path = await generate_minimap(replay, rep_path, uid)
+            if minimap_path:
+                log.info(f"Minimap generated: {minimap_path.name}")
+            else:
+                log.info("No minimap generated")
+
             # 4. Build embed + send
-            embed, files = build_embed(replay, chart_paths)
+            embed, files = build_embed(replay, chart_paths, minimap_path)
 
             await message.reply(
                 embed=embed,
@@ -142,7 +149,8 @@ async def _handle_replay(message: discord.Message, attachment: discord.Attachmen
 
         finally:
             # Clean up temp files regardless of success/failure
-            _cleanup([rep_path] + chart_paths)
+            extra = [minimap_path] if "minimap_path" in dir() and minimap_path else []
+            _cleanup([rep_path] + chart_paths + extra)
 
 
 def _cleanup(paths: list[Path]) -> None:
