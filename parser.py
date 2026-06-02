@@ -201,25 +201,37 @@ def _parse_screp_json(data: dict) -> ReplayData:
     winner_idx = _determine_winner(players_raw)
 
     # --- Commands section ---
-    # screp outputs Commands as a flat list of dicts, each with a "PlayerID" field.
-    # The list may also contain non-dict items (e.g. tuples like ('ParseErrCmds', None))
-    # which we skip.
-    raw_cmds = data.get("Commands", [])
+    # screp's "Commands" value is a list of tuples:
+    #   [(player_index, [cmd_dict, ...]), (player_index, [...]), ..., ("ParseErrCmds", None)]
+    # Each tuple's first element is the player index (int), second is the command list.
+    # Non-player entries like ("ParseErrCmds", None) are skipped.
+    # Some versions also emit a flat list of dicts with "PlayerID" — we handle both.
+    raw_cmds_raw = data.get("Commands", [])
     commands_by_player: dict[int, list[dict]] = {}
     flat_cmds: list[dict] = []
 
-    if isinstance(raw_cmds, list):
-        for item in raw_cmds:
-            if not isinstance(item, dict):
-                continue  # skip tuples like ('ParseErrCmds', None)
-            pid = item.get("PlayerID", -1)
-            if pid == -1:
-                pid = item.get("Player", -1)
-            commands_by_player.setdefault(pid, []).append(item)
-            flat_cmds.append(item)
+    if isinstance(raw_cmds_raw, list):
+        for item in raw_cmds_raw:
+            if isinstance(item, dict):
+                # Flat format: each dict has a PlayerID field
+                pid = item.get("PlayerID", item.get("Player", -1))
+                commands_by_player.setdefault(pid, []).append(item)
+                flat_cmds.append(item)
+            elif isinstance(item, (list, tuple)) and len(item) == 2:
+                # Tuple format: (player_index_or_key, [cmd_list])
+                key, cmds = item
+                if not isinstance(cmds, list):
+                    continue  # e.g. ('ParseErrCmds', None)
+                try:
+                    pid = int(key)
+                except (ValueError, TypeError):
+                    continue  # skip non-integer keys like 'ParseErrCmds'
+                valid = [c for c in cmds if isinstance(c, dict)]
+                commands_by_player.setdefault(pid, []).extend(valid)
+                flat_cmds.extend(valid)
 
-    elif isinstance(raw_cmds, dict):
-        for key, cmds in raw_cmds.items():
+    elif isinstance(raw_cmds_raw, dict):
+        for key, cmds in raw_cmds_raw.items():
             try:
                 pid = int(key)
             except (ValueError, TypeError):
@@ -229,7 +241,8 @@ def _parse_screp_json(data: dict) -> ReplayData:
                 commands_by_player[pid] = valid
                 flat_cmds.extend(valid)
 
-    raw_cmds = flat_cmds  # use flat list for chat extraction below
+    raw_cmds = flat_cmds  # flat list used for chat extraction below
+    log.info(f"Commands by player keys: {list(commands_by_player.keys())}, total cmds: {len(flat_cmds)}")
 
     # Computed APM data
     computed = data.get("Computed", {})
@@ -248,7 +261,11 @@ def _parse_screp_json(data: dict) -> ReplayData:
         p_type = p.get("Type", {})
         if isinstance(p_type, dict):
             p_type = p_type.get("Name", "")
-        if p_type not in ("Human", "Computer", ""):
+        log.info(f"Player {i}: name={p.get('Name')} type={p_type!r} race={p.get('Race')} ID={p.get('ID')}")
+        # Accept Human, Computer, and empty/unknown types
+        # Some screp versions use "Human", others use "h" or leave it blank
+        if p_type and p_type not in ("Human", "Computer", "h", "computer", "human"):
+            log.info(f"  -> Skipping player {i} with type {p_type!r}")
             continue
 
         race = _race_name(p.get("Race", ""))
@@ -276,15 +293,18 @@ def _parse_screp_json(data: dict) -> ReplayData:
     matchup = "v".join(races) if len(races) == 2 else "?v?"
 
     # --- Extract chat messages ---
-    # Build a name lookup by both player ID and slot ID
+    # Build a name lookup by player ID, slot ID, and index
     player_name_by_id: dict[int, str] = {}
     for i, p in enumerate(players_raw):
         if not isinstance(p, dict):
             continue
-        pid = p.get("ID", i)
         name = p.get("Name", f"Player {i + 1}")
+        pid = p.get("ID", i)
+        slot = p.get("SlotID", p.get("Slot", i))
         player_name_by_id[pid] = name
-        player_name_by_id[i] = name  # also index as fallback
+        player_name_by_id[i] = name        # index fallback
+        player_name_by_id[slot] = name     # slot fallback
+        log.info(f"Chat name map: ID={pid} slot={slot} index={i} -> {name!r}")
 
     chat_log: list[ChatMessage] = []
     for cmd in (raw_cmds if isinstance(raw_cmds, list) else []):
