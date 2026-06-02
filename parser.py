@@ -42,11 +42,24 @@ class PlayerStats:
 
 
 @dataclass
+class ChatMessage:
+    time_seconds: float
+    player_name: str
+    message: str
+
+    @property
+    def time_str(self) -> str:
+        m, s = divmod(int(self.time_seconds), 60)
+        return f"{m}:{s:02d}"
+
+
+@dataclass
 class ReplayData:
     map_name: str
     duration_seconds: float
     matchup: str
     players: list[PlayerStats] = field(default_factory=list)
+    chat_log: list[ChatMessage] = field(default_factory=list)
 
     @property
     def duration_str(self) -> str:
@@ -261,6 +274,7 @@ def _parse_screp_json(data: dict) -> ReplayData:
         duration_seconds=duration_seconds,
         matchup=matchup,
         players=players,
+        chat_log=chat_log,
     )
 
 

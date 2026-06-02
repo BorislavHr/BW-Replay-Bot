@@ -109,6 +109,22 @@ def build_embed(replay: ReplayData, chart_paths: list[Path]) -> tuple[discord.Em
             inline=True,
         )
 
+    # ── Chat log ─────────────────────────────────────────────────────────────
+    if replay.chat_log:
+        lines = [
+            f"`{msg.time_str}` **{msg.player_name}:** {msg.message}"
+            for msg in replay.chat_log
+        ]
+        # Discord field value limit is 1024 chars — truncate if needed
+        chat_text = "
+".join(lines)
+        if len(chat_text) > 1020:
+            chat_text = chat_text[:1020] + "
+…"
+        embed.add_field(name="💬  In-Game Chat", value=chat_text, inline=False)
+    else:
+        embed.add_field(name="💬  In-Game Chat", value="*No messages*", inline=False)
+
     # ── Attach charts ─────────────────────────────────────────────────────────
     files: list[discord.File] = []
 
