@@ -123,15 +123,28 @@ def _generate_minimap(replay: ReplayData, rep_path: Path, uid: str) -> Path | No
     except Exception:
         pass
 
+    # screp -map writes the minimap as <replayname>.png in the same directory
+    # as the replay file. We move it to our desired path afterward.
+    auto_map_path = rep_path.with_suffix(".png")
+
     try:
         result = subprocess.run(
-            [str(SCREP_BINARY), "-map", str(rep_path), str(raw_map_path)],
+            [str(SCREP_BINARY), "-map", str(rep_path)],
             capture_output=True,
             timeout=30,
         )
-        log.info(f"screp -map exit={result.returncode} stderr={result.stderr[:200]}")
-        if not raw_map_path.exists():
-            log.warning(f"screp -map produced no file. stderr: {result.stderr[:300]}")
+        log.info(f"screp -map exit={result.returncode} stderr={result.stderr[:200]!r}")
+        log.info(f"Looking for auto-generated minimap at: {auto_map_path}")
+
+        if auto_map_path.exists():
+            import shutil
+            shutil.move(str(auto_map_path), str(raw_map_path))
+            log.info(f"Moved minimap to {raw_map_path}")
+        elif not raw_map_path.exists():
+            # List temp dir contents to see what screp actually wrote
+            import os
+            files = os.listdir(rep_path.parent)
+            log.warning(f"No minimap found. Temp dir contents: {files}")
             return None
     except Exception as e:
         log.warning(f"screp -map failed: {e}")

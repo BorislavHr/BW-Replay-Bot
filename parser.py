@@ -249,6 +249,10 @@ def _parse_screp_json(data: dict) -> ReplayData:
     map_width: int   = map_data.get("Width", 0)
     map_height: int  = map_data.get("Height", 0)
     log.info(f"Map: {map_name!r} size={map_width}x{map_height} tiles")
+    log.info(f"MapData keys: {list(map_data.keys())}")
+    # Log MapData.Players if present - this is likely where spawn locations are
+    md_players = map_data.get("Players") or map_data.get("StartLocations") or []
+    log.info(f"MapData players/startlocs: {md_players!r}")
     duration_seconds = _frames_to_seconds(total_frames)
 
     players_raw: list = header.get("Players", [])
