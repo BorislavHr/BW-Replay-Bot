@@ -91,7 +91,7 @@ def _safe_get(obj, *keys, default=None):
 def _build_order_from_cmds(commands: list) -> list[BuildOrderEntry]:
     BUILD_CMD_TYPES = {
         "Build", "Train", "Morph", "Research", "Upgrade",
-        "BuildingMorph", "UnitMorph",
+        "BuildingMorph", "UnitMorph", "Infestation",
     }
     entries: list[BuildOrderEntry] = []
     seen: set[str] = set()
@@ -100,19 +100,22 @@ def _build_order_from_cmds(commands: list) -> list[BuildOrderEntry]:
         if not isinstance(cmd, dict):
             continue
 
-        cmd_type = cmd.get("Name", "") or cmd.get("Type", "") or cmd.get("Cmd", "")
+        cmd_type = _safe_get(cmd, "Type", "Name") or ""
         if cmd_type not in BUILD_CMD_TYPES:
             continue
 
         # screp nests the unit/tech name differently depending on command type
         unit_name = (
-            _safe_get(cmd, "UnitType", "Name")
+            _safe_get(cmd, "Unit", "Name")
+            or _safe_get(cmd, "UnitType", "Name")
             or _safe_get(cmd, "TechType", "Name")
             or _safe_get(cmd, "UpgradeType", "Name")
-            or _safe_get(cmd, "Unit", "Name")
             or cmd.get("UnitName")
             or "Unknown"
         )
+        # Skip "None" units (non-build commands that slipped through)
+        if unit_name in ("None", "Unknown"):
+            continue
 
         frame = cmd.get("Frame", 0)
         if unit_name in seen:
