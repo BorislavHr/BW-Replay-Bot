@@ -243,7 +243,7 @@ def _parse_screp_json(data: dict) -> ReplayData:
     log.info(f"screp JSON top-level keys: {list(data.keys())}")
 
     header   = data.get("Header", {})
-    map_data = data.get("MapData", {})
+    map_data = data.get("MapData") or {}
     map_name: str    = header.get("Map", "Unknown Map")
     total_frames: int = header.get("Frames", 0)
     map_width: int   = map_data.get("Width", 0)
