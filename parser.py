@@ -310,9 +310,8 @@ def _parse_screp_json(data: dict) -> ReplayData:
     matchup = "v".join(races) if len(races) == 2 else "?v?"
 
     # --- Extract chat messages ---
-    # screp uses SenderSlotID in chat commands, which maps to the player's
-    # position in the lobby slot list, NOT their ID field.
-    # We build a lookup by every possible key: ID, lobby index, and SlotID.
+    # SenderSlotID in chat commands maps to the player's SlotID field.
+    # We build the lookup using SlotID as the primary key only.
     player_name_by_slot: dict[int, str] = {}
     for i, p in enumerate(players_raw):
         if not isinstance(p, dict):
@@ -320,13 +319,12 @@ def _parse_screp_json(data: dict) -> ReplayData:
         name = p.get("Name", f"Player {i + 1}")
         pid  = p.get("ID", i)
         slot = p.get("SlotID", p.get("Slot", None))
-        # Map by player ID
-        player_name_by_slot[pid] = name
-        # Map by 0-based index
-        player_name_by_slot[i] = name
-        # Map by explicit SlotID if present
+        # Primary: map by SlotID (what SenderSlotID refers to)
         if slot is not None:
             player_name_by_slot[slot] = name
+        # Fallback: map by player ID and index in case SlotID is absent
+        player_name_by_slot.setdefault(pid, name)
+        player_name_by_slot.setdefault(i, name)
         log.info(f"Chat slot map: index={i} ID={pid} SlotID={slot} -> {name!r}")
 
     chat_log: list[ChatMessage] = []
@@ -339,7 +337,6 @@ def _parse_screp_json(data: dict) -> ReplayData:
         message = cmd.get("Message", "").strip()
         if not message:
             continue
-        # SenderSlotID identifies the sender; fall back to PlayerID
         sender = cmd.get("SenderSlotID", cmd.get("PlayerID", -1))
         pname  = player_name_by_slot.get(sender, f"Player {sender}")
         chat_log.append(ChatMessage(
