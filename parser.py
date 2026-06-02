@@ -118,8 +118,15 @@ def _build_order_from_cmds(commands: list) -> list[BuildOrderEntry]:
         "Build", "Train", "Morph", "Research", "Upgrade",
         "BuildingMorph", "UnitMorph", "Infestation",
     }
+    # How many times we allow the same unit/building to appear in the build order.
+    # Workers and basic combat units are capped low since they repeat constantly;
+    # buildings and key tech units are shown every time they appear.
+    WORKER_NAMES = {"Probe", "SCV", "Drone"}
+    REPEAT_CAPS: dict[str, int] = {name: 2 for name in WORKER_NAMES}
+    DEFAULT_CAP = 6   # anything not listed gets up to 6 entries
+
     entries: list[BuildOrderEntry] = []
-    seen: set[str] = set()
+    counts: dict[str, int] = {}
 
     for cmd in commands:
         if not isinstance(cmd, dict):
@@ -129,7 +136,6 @@ def _build_order_from_cmds(commands: list) -> list[BuildOrderEntry]:
         if cmd_type not in BUILD_CMD_TYPES:
             continue
 
-        # screp nests the unit/tech name differently depending on command type
         unit_name = (
             _safe_get(cmd, "Unit", "Name")
             or _safe_get(cmd, "UnitType", "Name")
@@ -138,15 +144,16 @@ def _build_order_from_cmds(commands: list) -> list[BuildOrderEntry]:
             or cmd.get("UnitName")
             or "Unknown"
         )
-        # Skip "None" units (non-build commands that slipped through)
         if unit_name in ("None", "Unknown"):
             continue
 
-        frame = cmd.get("Frame", 0)
-        if unit_name in seen:
+        cap = REPEAT_CAPS.get(unit_name, DEFAULT_CAP)
+        current = counts.get(unit_name, 0)
+        if current >= cap:
             continue
-        seen.add(unit_name)
+        counts[unit_name] = current + 1
 
+        frame = cmd.get("Frame", 0)
         entries.append(BuildOrderEntry(
             frame=frame,
             time_seconds=_frames_to_seconds(frame),

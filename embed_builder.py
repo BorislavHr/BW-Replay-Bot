@@ -56,7 +56,16 @@ def _build_order_text(player: PlayerStats) -> str:
         f"`{int(e.time_seconds // 60):02d}:{int(e.time_seconds % 60):02d}` {e.name}"
         for e in player.build_order
     ]
-    return "\n".join(lines)
+    # Discord field value limit is 1024 chars — fit as many lines as possible
+    MAX_CHARS = 1016
+    text = ""
+    for line in lines:
+        candidate = text + line + "\n"
+        if len(candidate) > MAX_CHARS:
+            text += "…"
+            break
+        text = candidate
+    return text.rstrip()
 
 
 # ---------------------------------------------------------------------------
