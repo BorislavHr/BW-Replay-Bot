@@ -40,9 +40,6 @@ class PlayerStats:
     eapm: int
     build_order: list[BuildOrderEntry] = field(default_factory=list)
     apm_timeline: list[tuple[float, int]] = field(default_factory=list)
-    # Spawn location in tile coordinates (from Header.Players[i].StartLocation)
-    spawn_x: int = 0
-    spawn_y: int = 0
 
 
 @dataclass
@@ -64,9 +61,6 @@ class ReplayData:
     matchup: str
     players: list[PlayerStats] = field(default_factory=list)
     chat_log: list[ChatMessage] = field(default_factory=list)
-    # Map dimensions in tiles (from MapData)
-    map_width: int = 0
-    map_height: int = 0
 
     @property
     def duration_str(self) -> str:
@@ -242,17 +236,9 @@ def _parse_screp_json(data: dict) -> ReplayData:
     # Log top-level keys to help diagnose structure issues
     log.info(f"screp JSON top-level keys: {list(data.keys())}")
 
-    header   = data.get("Header", {})
-    map_data = data.get("MapData") or {}
-    map_name: str    = header.get("Map", "Unknown Map")
+    header = data.get("Header", {})
+    map_name: str = header.get("Map", "Unknown Map")
     total_frames: int = header.get("Frames", 0)
-    map_width: int   = map_data.get("Width", 0)
-    map_height: int  = map_data.get("Height", 0)
-    log.info(f"Map: {map_name!r} size={map_width}x{map_height} tiles")
-    log.info(f"MapData keys: {list(map_data.keys())}")
-    # Log MapData.Players if present - this is likely where spawn locations are
-    md_players = map_data.get("Players") or map_data.get("StartLocations") or []
-    log.info(f"MapData players/startlocs: {md_players!r}")
     duration_seconds = _frames_to_seconds(total_frames)
 
     players_raw: list = header.get("Players", [])
@@ -301,7 +287,6 @@ def _parse_screp_json(data: dict) -> ReplayData:
         p_type = p.get("Type", {})
         if isinstance(p_type, dict):
             p_type = p_type.get("Name", "")
-        log.info(f"Player {i} full dict keys: {list(p.keys())}")
         log.info(f"Player {i}: name={p.get('Name')} type={p_type!r} race={p.get('Race')} ID={p.get('ID')} SlotID={p.get('SlotID')} TeamID={p.get('TeamID')}")
         # Accept Human, Computer, and empty/unknown types
         # Some screp versions use "Human", others use "h" or leave it blank
@@ -321,15 +306,6 @@ def _parse_screp_json(data: dict) -> ReplayData:
         build_order  = _build_order_from_cmds(cmds)
         apm_timeline = _apm_timeline_from_cmds(cmds, total_frames)
 
-        # Spawn location — tile coordinates from StartLocation
-        start_loc = p.get("StartLocation") or {}
-        if isinstance(start_loc, dict):
-            spawn_x = start_loc.get("X", 0)
-            spawn_y = start_loc.get("Y", 0)
-        else:
-            spawn_x = spawn_y = 0
-        log.info(f"Player {i} spawn: ({spawn_x}, {spawn_y}) tiles")
-
         players.append(PlayerStats(
             name=p.get("Name", f"Player {i + 1}"),
             race=race,
@@ -338,8 +314,6 @@ def _parse_screp_json(data: dict) -> ReplayData:
             eapm=eapm,
             build_order=build_order,
             apm_timeline=apm_timeline,
-            spawn_x=spawn_x,
-            spawn_y=spawn_y,
         ))
 
     matchup = "v".join(races) if len(races) == 2 else "?v?"
@@ -382,8 +356,6 @@ def _parse_screp_json(data: dict) -> ReplayData:
 
     return ReplayData(
         map_name=map_name,
-        map_width=map_width,
-        map_height=map_height,
         duration_seconds=duration_seconds,
         matchup=matchup,
         players=players,

@@ -1,5 +1,5 @@
 """
-visualizer.py — Generates chart images and minimap from ReplayData.
+visualizer.py — Generates chart images from ReplayData.
 
 Returns file Paths so bot.py can attach them to Discord messages.
 Caller is responsible for deleting temp files after sending.
@@ -7,8 +7,6 @@ Caller is responsible for deleting temp files after sending.
 
 import asyncio
 import logging
-import os
-import subprocess
 from pathlib import Path
 
 import matplotlib
@@ -16,9 +14,8 @@ matplotlib.use("Agg")
 matplotlib.rcParams["font.family"] = "DejaVu Sans"
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
-from PIL import Image, ImageDraw, ImageFont
 
-from config import CHART_DPI, PLAYER_COLORS, SCREP_BINARY, TEMP_DIR
+from config import CHART_DPI, PLAYER_COLORS, TEMP_DIR
 from parser import ReplayData
 
 log = logging.getLogger("sc-replay-bot")
@@ -92,146 +89,7 @@ def _chart_apm(replay: ReplayData, uid: str) -> Path | None:
 
 
 # ---------------------------------------------------------------------------
-# Minimap with spawn location overlay
-# ---------------------------------------------------------------------------
-
-# Match PLAYER_COLORS from config — blue for player 1, red for player 2
-SPAWN_COLORS = ["#4fc3f7", "#ef5350"]
-
-
-def _generate_minimap(replay: ReplayData, rep_path: Path, uid: str) -> Path | None:
-    """
-    1. Call screp -map to extract the raw minimap PNG from the replay file.
-    2. Upscale it to ~512px on the longer side.
-    3. Draw a coloured circle + player name at each spawn location.
-    4. Return the composited PNG path.
-    """
-    raw_map_path = TEMP_DIR / f"minimap_raw_{uid}.png"
-    out_path     = TEMP_DIR / f"minimap_{uid}.png"
-
-    # ── Step 1: extract raw minimap ─────────────────────────────────────────
-    try:
-        os.chmod(SCREP_BINARY, 0o755)
-    except Exception:
-        pass
-
-    # Log screp version so we can diagnose flag issues
-    try:
-        ver = subprocess.run([str(SCREP_BINARY), "-version"],
-                             capture_output=True, timeout=5)
-        log.info(f"screp version: {(ver.stdout or ver.stderr)[:80].decode(errors='replace').strip()}")
-    except Exception:
-        pass
-
-    # screp -map writes the minimap as <replayname>.png in the same directory
-    # as the replay file. We move it to our desired path afterward.
-    auto_map_path = rep_path.with_suffix(".png")
-
-    try:
-        result = subprocess.run(
-            [str(SCREP_BINARY), "-map", str(rep_path)],
-            capture_output=True,
-            timeout=30,
-        )
-        log.info(f"screp -map exit={result.returncode} stderr={result.stderr[:200]!r}")
-        log.info(f"Looking for auto-generated minimap at: {auto_map_path}")
-
-        if auto_map_path.exists():
-            import shutil
-            shutil.move(str(auto_map_path), str(raw_map_path))
-            log.info(f"Moved minimap to {raw_map_path}")
-        elif not raw_map_path.exists():
-            # List temp dir contents to see what screp actually wrote
-            import os
-            files = os.listdir(rep_path.parent)
-            log.warning(f"No minimap found. Temp dir contents: {files}")
-            return None
-    except Exception as e:
-        log.warning(f"screp -map failed: {e}")
-        return None
-
-    # ── Step 2: open and upscale ─────────────────────────────────────────────
-    try:
-        img = Image.open(raw_map_path).convert("RGBA")
-    except Exception as e:
-        log.warning(f"Could not open raw minimap: {e}")
-        raw_map_path.unlink(missing_ok=True)
-        return None
-
-    orig_w, orig_h = img.size
-    map_w = replay.map_width  or orig_w
-    map_h = replay.map_height or orig_h
-    log.info(f"Raw minimap: {orig_w}x{orig_h}px  map tiles: {map_w}x{map_h}")
-
-    TARGET = 512
-    scale  = TARGET / max(map_w, map_h)
-    new_w  = max(1, int(map_w * scale))
-    new_h  = max(1, int(map_h * scale))
-    img    = img.resize((new_w, new_h), Image.NEAREST)
-    draw   = ImageDraw.Draw(img)
-
-    # ── Step 3: load font ────────────────────────────────────────────────────
-    font_paths = [
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-        "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
-        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
-    ]
-    font = None
-    for fp in font_paths:
-        try:
-            font = ImageFont.truetype(fp, 14)
-            break
-        except Exception:
-            continue
-    if font is None:
-        font = ImageFont.load_default()
-
-    # ── Step 4: draw spawn markers ───────────────────────────────────────────
-    for i, player in enumerate(replay.players):
-        sx, sy = player.spawn_x, player.spawn_y
-        if sx == 0 and sy == 0:
-            log.info(f"Player {player.name} has no spawn location — skipping marker")
-            continue
-
-        color = SPAWN_COLORS[i % len(SPAWN_COLORS)]
-
-        # Convert tile coords to pixel coords in the upscaled image
-        # screp gives StartLocation in tiles; the raw minimap is 1px per tile
-        px = int(sx * scale)
-        py = int(sy * scale)
-        px = max(12, min(new_w - 12, px))
-        py = max(12, min(new_h - 12, py))
-
-        log.info(f"Drawing spawn for {player.name} at tile ({sx},{sy}) → px ({px},{py})")
-
-        r = 10
-        # White outline for contrast on any background
-        draw.ellipse([px - r - 2, py - r - 2, px + r + 2, py + r + 2],
-                     fill="white", outline="white")
-        # Coloured fill
-        draw.ellipse([px - r, py - r, px + r, py + r],
-                     fill=color, outline=color)
-
-        # Name label with black drop-shadow for legibility
-        label  = player.name
-        tx, ty = px + r + 4, py - 8
-        draw.text((tx + 1, ty + 1), label, fill="black", font=font)
-        draw.text((tx,     ty),     label, fill="white", font=font)
-
-    # ── Step 5: save and clean up ────────────────────────────────────────────
-    try:
-        img.convert("RGB").save(out_path, "PNG")
-        raw_map_path.unlink(missing_ok=True)
-        log.info(f"Minimap saved: {out_path}")
-        return out_path
-    except Exception as e:
-        log.warning(f"Could not save composited minimap: {e}")
-        raw_map_path.unlink(missing_ok=True)
-        return None
-
-
-# ---------------------------------------------------------------------------
-# Public async entry-points
+# Public async entry-point
 # ---------------------------------------------------------------------------
 
 async def generate_charts(replay: ReplayData, uid: str) -> list[Path]:
@@ -239,9 +97,3 @@ async def generate_charts(replay: ReplayData, uid: str) -> list[Path]:
     loop = asyncio.get_event_loop()
     apm_path = await loop.run_in_executor(None, _chart_apm, replay, uid)
     return [apm_path] if apm_path is not None else []
-
-
-async def generate_minimap(replay: ReplayData, rep_path: Path, uid: str) -> Path | None:
-    """Generate the minimap with spawn overlays. Runs in a thread pool."""
-    loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, _generate_minimap, replay, rep_path, uid)

@@ -72,15 +72,11 @@ def _build_order_text(player: PlayerStats) -> str:
 # Public builder
 # ---------------------------------------------------------------------------
 
-def build_embed(
-    replay: ReplayData,
-    chart_paths: list[Path],
-    minimap_path: Path | None = None,
-) -> tuple[discord.Embed, list[discord.File]]:
+def build_embed(replay: ReplayData, chart_paths: list[Path]) -> tuple[discord.Embed, list[discord.File]]:
     """
     Returns:
         embed  — the rich Discord embed
-        files  — list of discord.File objects (charts + minimap) to attach
+        files  — list of discord.File objects (charts) to attach
     """
     embed = discord.Embed(
         title=f"📺  Replay Analysis — {replay.matchup}",
@@ -136,15 +132,9 @@ def build_embed(
     else:
         embed.add_field(name="💬  In-Game Chat", value="*No messages*", inline=False)
 
-    # ── Attach minimap as thumbnail (top-right of embed) ────────────────────
+    # ── Attach charts ─────────────────────────────────────────────────────────
     files: list[discord.File] = []
 
-    if minimap_path and minimap_path.exists():
-        mm_file = discord.File(minimap_path, filename=minimap_path.name)
-        files.append(mm_file)
-        embed.set_thumbnail(url=f"attachment://{minimap_path.name}")
-
-    # ── Attach APM chart as main embed image ─────────────────────────────────
     if chart_paths:
         first = chart_paths[0]
         files.append(discord.File(first, filename=first.name))
