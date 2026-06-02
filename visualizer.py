@@ -151,14 +151,9 @@ def _chart_build_order(replay: ReplayData, uid: str) -> Path | None:
 
 async def generate_charts(replay: ReplayData, uid: str) -> list[Path]:
     """
-    Generate all charts for a replay and return paths to the PNG files.
+    Generate the APM chart and return its path.
     Runs matplotlib in a thread pool so the Discord event loop stays free.
     """
     loop = asyncio.get_event_loop()
-
-    apm_path, bo_path = await asyncio.gather(
-        loop.run_in_executor(None, _chart_apm, replay, uid),
-        loop.run_in_executor(None, _chart_build_order, replay, uid),
-    )
-
-    return [p for p in (apm_path, bo_path) if p is not None]
+    apm_path = await loop.run_in_executor(None, _chart_apm, replay, uid)
+    return [apm_path] if apm_path is not None else []
