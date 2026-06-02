@@ -231,7 +231,7 @@ async def parse_replay(rep_path: Path) -> ReplayData:
 
     def _run() -> dict:
         result = subprocess.run(
-            [str(SCREP_BINARY), "-json", str(rep_path)],
+            [str(SCREP_BINARY), "-cmds", "-computed", str(rep_path)],
             capture_output=True,
             text=True,
             timeout=SCREP_TIMEOUT,
