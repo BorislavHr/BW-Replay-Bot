@@ -206,55 +206,28 @@ def _parse_screp_json(data: dict) -> ReplayData:
     winner_idx = _determine_winner(players_raw)
 
     # --- Commands section ---
-    # screp's "Commands" value is a list of tuples:
-    #   [(player_index, [cmd_dict, ...]), (player_index, [...]), ..., ("ParseErrCmds", None)]
-    # Each tuple's first element is the player index (int), second is the command list.
-    # Non-player entries like ("ParseErrCmds", None) are skipped.
-    # Some versions also emit a flat list of dicts with "PlayerID" — we handle both.
-    raw_cmds_raw = data.get("Commands", [])
+    # screp returns Commands as a dict: {"Cmds": [list of all cmds], "ParseErrCmds": None}
+    # Each cmd dict has a "PlayerID" field (0 or 1).
+    raw_cmds_raw = data.get("Commands", {})
     commands_by_player: dict[int, list[dict]] = {}
     flat_cmds: list[dict] = []
 
-    if isinstance(raw_cmds_raw, list):
-        for item in raw_cmds_raw:
-            if isinstance(item, dict):
-                # Flat format: each dict has a PlayerID field
-                pid = item.get("PlayerID", item.get("Player", -1))
-                commands_by_player.setdefault(pid, []).append(item)
-                flat_cmds.append(item)
-            elif isinstance(item, (list, tuple)) and len(item) == 2:
-                # Tuple format: (player_index_or_key, [cmd_list])
-                key, cmds = item
-                if not isinstance(cmds, list):
-                    continue  # e.g. ('ParseErrCmds', None)
-                try:
-                    pid = int(key)
-                except (ValueError, TypeError):
-                    continue  # skip non-integer keys like 'ParseErrCmds'
-                valid = [c for c in cmds if isinstance(c, dict)]
-                commands_by_player.setdefault(pid, []).extend(valid)
-                flat_cmds.extend(valid)
+    # Extract the flat command list from the "Cmds" key
+    if isinstance(raw_cmds_raw, dict):
+        cmd_list = raw_cmds_raw.get("Cmds", []) or []
+    elif isinstance(raw_cmds_raw, list):
+        cmd_list = raw_cmds_raw
+    else:
+        cmd_list = []
 
-    elif isinstance(raw_cmds_raw, dict):
-        for key, cmds in raw_cmds_raw.items():
-            try:
-                pid = int(key)
-            except (ValueError, TypeError):
-                pid = -1
-            if isinstance(cmds, list):
-                valid = [c for c in cmds if isinstance(c, dict)]
-                commands_by_player[pid] = valid
-                flat_cmds.extend(valid)
+    for item in cmd_list:
+        if not isinstance(item, dict):
+            continue
+        pid = item.get("PlayerID", item.get("Player", -1))
+        commands_by_player.setdefault(pid, []).append(item)
+        flat_cmds.append(item)
 
     raw_cmds = flat_cmds  # flat list used for chat extraction below
-    # Debug: log first item type and content to diagnose structure
-    if raw_cmds_raw:
-        first = raw_cmds_raw[0] if isinstance(raw_cmds_raw, list) else None
-        if first is not None:
-            log.info(f"Commands first item type: {type(first).__name__}, repr: {repr(first)[:300]}")
-            if isinstance(first, dict):
-                log.info(f"Commands first item keys: {list(first.keys())}")
-                log.info(f"Commands first item PlayerID: {first.get('PlayerID')!r}")
     log.info(f"Commands by player keys: {list(commands_by_player.keys())}, total cmds: {len(flat_cmds)}")
 
     # Computed APM data
@@ -274,7 +247,7 @@ def _parse_screp_json(data: dict) -> ReplayData:
         p_type = p.get("Type", {})
         if isinstance(p_type, dict):
             p_type = p_type.get("Name", "")
-        log.info(f"Player {i}: name={p.get('Name')} type={p_type!r} race={p.get('Race')} ID={p.get('ID')}")
+        log.info(f"Player {i}: name={p.get('Name')} type={p_type!r} race={p.get('Race')} ID={p.get('ID')} SlotID={p.get('SlotID')} TeamID={p.get('TeamID')}")
         # Accept Human, Computer, and empty/unknown types
         # Some screp versions use "Human", others use "h" or leave it blank
         if p_type and p_type not in ("Human", "Computer", "h", "computer", "human"):
