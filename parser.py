@@ -223,6 +223,12 @@ async def parse_replay(rep_path: Path) -> ReplayData:
             "and place it next to bot.py."
         )
 
+    # Ensure the binary is executable at runtime (needed on Railway/Linux)
+    import sys, os, stat
+    if sys.platform != "win32":
+        current = os.stat(SCREP_BINARY).st_mode
+        os.chmod(SCREP_BINARY, current | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
     def _run() -> dict:
         result = subprocess.run(
             [str(SCREP_BINARY), "-json", str(rep_path)],
