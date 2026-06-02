@@ -43,6 +43,14 @@ class HotkeyStats:
 
 
 @dataclass
+class HotkeyEvent:
+    """A single hotkey press, used only for the timeline chart."""
+    frame: int
+    group: int          # 0-9
+    is_assign: bool     # True = Assign/Add (set group), False = Select (recall)
+
+
+@dataclass
 class PlayerStats:
     name: str
     race: str
@@ -52,6 +60,8 @@ class PlayerStats:
     build_order: list[BuildOrderEntry] = field(default_factory=list)
     apm_timeline: list[tuple[float, int]] = field(default_factory=list)
     hotkeys: HotkeyStats = field(default_factory=HotkeyStats)
+    # Raw hotkey presses for the timeline chart (kept separate from the summary)
+    hotkey_events: list[HotkeyEvent] = field(default_factory=list)
 
 
 @dataclass
@@ -299,6 +309,30 @@ def _analyze_hotkeys(commands: list) -> HotkeyStats:
     )
 
 
+def _collect_hotkey_events(commands: list) -> list[HotkeyEvent]:
+    """
+    Collect raw hotkey presses (frame, group, assign-vs-select) for the
+    timeline chart. Separate from _analyze_hotkeys so the summary stays
+    lightweight; this list is only used for plotting.
+    """
+    events: list[HotkeyEvent] = []
+    for cmd in commands:
+        if not isinstance(cmd, dict):
+            continue
+        if _safe_get(cmd, "Type", "Name") != "Hotkey":
+            continue
+        group = cmd.get("Group", -1)
+        if not (0 <= group <= 9):
+            continue
+        hk_action = _safe_get(cmd, "HotkeyType", "Name") or ""
+        events.append(HotkeyEvent(
+            frame=cmd.get("Frame", 0),
+            group=group,
+            is_assign=(hk_action in ("Assign", "Add")),
+        ))
+    return events
+
+
 def _determine_winner(players_raw: list, flat_cmds: list = None) -> Optional[int]:
     # First try: use the Result field screp may provide
     for i, p in enumerate(players_raw):
@@ -419,6 +453,7 @@ def _parse_screp_json(data: dict) -> ReplayData:
         build_order  = _build_order_from_cmds(cmds)
         apm_timeline = _apm_timeline_from_cmds(cmds, total_frames)
         hotkeys      = _analyze_hotkeys(cmds)
+        hotkey_events = _collect_hotkey_events(cmds)
 
         players.append(PlayerStats(
             name=p.get("Name", f"Player {i + 1}"),
@@ -429,6 +464,7 @@ def _parse_screp_json(data: dict) -> ReplayData:
             build_order=build_order,
             apm_timeline=apm_timeline,
             hotkeys=hotkeys,
+            hotkey_events=hotkey_events,
         ))
 
     matchup = "v".join(races) if len(races) == 2 else "?v?"
