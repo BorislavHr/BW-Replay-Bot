@@ -16,7 +16,7 @@ from discord.ext import commands
 from config import DISCORD_TOKEN, TEMP_DIR
 from embed_builder import build_embed
 from parser import parse_replay
-from visualizer import generate_charts
+# visualizer is imported lazily in _handle_replay to avoid startup memory spike
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -98,8 +98,9 @@ async def _handle_replay(message: discord.Message, attachment: discord.Attachmen
                 f"({replay.duration_str})"
             )
 
-            # 3. Generate charts
+            # 3. Generate charts (lazy import to avoid startup memory spike)
             log.info("Generating charts…")
+            from visualizer import generate_charts
             chart_paths = await generate_charts(replay, uid)
             log.info(f"Generated {len(chart_paths)} chart(s)")
 
