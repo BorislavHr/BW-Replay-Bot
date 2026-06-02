@@ -177,13 +177,43 @@ def _apm_timeline_from_cmds(commands: list, total_frames: int) -> list[tuple[flo
     return timeline
 
 
-def _determine_winner(players_raw: list) -> Optional[int]:
+def _determine_winner(players_raw: list, flat_cmds: list = None) -> Optional[int]:
+    # First try: use the Result field screp may provide
     for i, p in enumerate(players_raw):
         if not isinstance(p, dict):
             continue
         result = p.get("Result") or p.get("Win")
-        if result in ("Win", True, 1):
+        if isinstance(result, dict):
+            result = result.get("Name") or result.get("ID")
+        if result in ("Win", "win", True, 1):
             return i
+
+    # Second try: the player who sent "Leave Game" lost; the other one won
+    if flat_cmds:
+        leave_pids = set()
+        for cmd in flat_cmds:
+            if not isinstance(cmd, dict):
+                continue
+            cmd_name = cmd.get("Type", {})
+            if isinstance(cmd_name, dict):
+                cmd_name = cmd_name.get("Name", "")
+            if cmd_name == "Leave Game":
+                leave_pids.add(cmd.get("PlayerID", -1))
+
+        human_pids = [
+            p.get("ID", i)
+            for i, p in enumerate(players_raw)
+            if isinstance(p, dict)
+            and (p.get("Type", {}).get("Name") if isinstance(p.get("Type"), dict) else p.get("Type", "")) in ("Human", "")
+        ]
+
+        winners = [pid for pid in human_pids if pid not in leave_pids]
+        if len(winners) == 1:
+            # Map player ID back to index
+            for i, p in enumerate(players_raw):
+                if isinstance(p, dict) and p.get("ID", i) == winners[0]:
+                    return i
+
     return None
 
 
@@ -203,7 +233,7 @@ def _parse_screp_json(data: dict) -> ReplayData:
     duration_seconds = _frames_to_seconds(total_frames)
 
     players_raw: list = header.get("Players", [])
-    winner_idx = _determine_winner(players_raw)
+    winner_idx = _determine_winner(players_raw, flat_cmds)
 
     # --- Commands section ---
     # screp returns Commands as a dict: {"Cmds": [list of all cmds], "ParseErrCmds": None}
