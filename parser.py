@@ -79,16 +79,21 @@ def _frames_to_seconds(frames: int) -> float:
 
 
 def _race_name(raw) -> str:
-    """Normalise screp race — handles both short ('T') and full ('Terran') strings."""
+    """Normalise screp race — handles string, short string, or dict."""
     if isinstance(raw, dict):
-        # Some screp versions return {"Name": "Terran", "ShortName": "T"}
+        # screp returns {"Name": "Zerg", "ShortName": "zerg", "Letter": 90}
         raw = raw.get("Name") or raw.get("ShortName", "")
+    if not raw:
+        return "Unknown"
+    # Normalise to title case
+    raw = str(raw).strip().title()
     mapping = {
         "T": "Terran", "Terran": "Terran",
-        "P": "Protoss", "Protoss": "Protoss",
+        "P": "Protoss", "Protoss": "Protoss", "Toss": "Protoss",
         "Z": "Zerg",    "Zerg": "Zerg",
+        "R": "Random",  "Random": "Random",
     }
-    return mapping.get(raw, raw or "Unknown")
+    return mapping.get(raw, raw)
 
 
 def _safe_get(obj, *keys, default=None):
@@ -242,6 +247,14 @@ def _parse_screp_json(data: dict) -> ReplayData:
                 flat_cmds.extend(valid)
 
     raw_cmds = flat_cmds  # flat list used for chat extraction below
+    # Debug: log first item type and content to diagnose structure
+    if raw_cmds_raw:
+        first = raw_cmds_raw[0] if isinstance(raw_cmds_raw, list) else None
+        if first is not None:
+            log.info(f"Commands first item type: {type(first).__name__}, repr: {repr(first)[:300]}")
+            if isinstance(first, dict):
+                log.info(f"Commands first item keys: {list(first.keys())}")
+                log.info(f"Commands first item PlayerID: {first.get('PlayerID')!r}")
     log.info(f"Commands by player keys: {list(commands_by_player.keys())}, total cmds: {len(flat_cmds)}")
 
     # Computed APM data
