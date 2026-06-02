@@ -115,6 +115,14 @@ def _generate_minimap(replay: ReplayData, rep_path: Path, uid: str) -> Path | No
     except Exception:
         pass
 
+    # Log screp version so we can diagnose flag issues
+    try:
+        ver = subprocess.run([str(SCREP_BINARY), "-version"],
+                             capture_output=True, timeout=5)
+        log.info(f"screp version: {(ver.stdout or ver.stderr)[:80].decode(errors='replace').strip()}")
+    except Exception:
+        pass
+
     try:
         result = subprocess.run(
             [str(SCREP_BINARY), "-map", f"-out={raw_map_path}", str(rep_path)],
