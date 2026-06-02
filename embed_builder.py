@@ -50,22 +50,18 @@ def _result_badge(player: PlayerStats) -> str:
 # ---------------------------------------------------------------------------
 
 def _hotkey_text(player: PlayerStats) -> str:
-    """Format the control-group usage summary for one player."""
+    """Format the control-group usage summary, one group per line."""
     hk = player.hotkeys
     if not hk.group_roles and hk.camera_snaps == 0:
         return "*No hotkey data*"
 
     role_emoji = {"Army": "⚔️", "Production": "🏭", "Mixed": "🔀"}
-    lines = []
-
-    if hk.group_roles:
-        # Sort by group number for a stable, readable layout
-        parts = [
-            f"`{g}` {role_emoji.get(role, '•')} {role}"
-            for g, role in sorted(hk.group_roles.items())
-        ]
-        lines.append(" · ".join(parts))
-
+    lines = [
+        f"`{g}` {role_emoji.get(role, '•')} {role}"
+        for g, role in sorted(hk.group_roles.items())
+    ]
+    if lines:
+        lines.append("")   # blank spacer line before the snap count
     lines.append(f"📷 Camera snaps: **{hk.camera_snaps}**")
     return "\n".join(lines)
 
