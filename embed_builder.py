@@ -100,13 +100,11 @@ def build_embed(replay: ReplayData, chart_paths: list[Path]) -> tuple[discord.Em
 
     embed.add_field(name="\u200b", value="", inline=False)   # spacer
 
-    # ── Build order comparison ───────────────────────────────────────────────
+    # ── Build orders ─────────────────────────────────────────────────────────
     for i, player in enumerate(replay.players):
         race_emoji = RACE_EMOJI.get(player.race, "❓")
-        color_dot  = "🔵" if i == 0 else "🔴"
-        label_badge = f"**{player.build_label}**" if player.build_label != "Unknown Opening" else "*Unknown Opening*"
         embed.add_field(
-            name=f"{color_dot} {race_emoji} {player.name} — {label_badge}",
+            name=f"{race_emoji}  {player.name} — Build Order",
             value=_build_order_text(player),
             inline=True,
         )
