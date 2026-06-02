@@ -309,18 +309,24 @@ def _parse_screp_json(data: dict) -> ReplayData:
     matchup = "v".join(races) if len(races) == 2 else "?v?"
 
     # --- Extract chat messages ---
-    # Build a name lookup by player ID, slot ID, and index
-    player_name_by_id: dict[int, str] = {}
+    # screp uses SenderSlotID in chat commands, which maps to the player's
+    # position in the lobby slot list, NOT their ID field.
+    # We build a lookup by every possible key: ID, lobby index, and SlotID.
+    player_name_by_slot: dict[int, str] = {}
     for i, p in enumerate(players_raw):
         if not isinstance(p, dict):
             continue
         name = p.get("Name", f"Player {i + 1}")
-        pid = p.get("ID", i)
-        slot = p.get("SlotID", p.get("Slot", i))
-        player_name_by_id[pid] = name
-        player_name_by_id[i] = name        # index fallback
-        player_name_by_id[slot] = name     # slot fallback
-        log.info(f"Chat name map: ID={pid} slot={slot} index={i} -> {name!r}")
+        pid  = p.get("ID", i)
+        slot = p.get("SlotID", p.get("Slot", None))
+        # Map by player ID
+        player_name_by_slot[pid] = name
+        # Map by 0-based index
+        player_name_by_slot[i] = name
+        # Map by explicit SlotID if present
+        if slot is not None:
+            player_name_by_slot[slot] = name
+        log.info(f"Chat slot map: index={i} ID={pid} SlotID={slot} -> {name!r}")
 
     chat_log: list[ChatMessage] = []
     for cmd in (raw_cmds if isinstance(raw_cmds, list) else []):
@@ -328,13 +334,13 @@ def _parse_screp_json(data: dict) -> ReplayData:
             continue
         if _safe_get(cmd, "Type", "Name") != "Chat":
             continue
-        frame = cmd.get("Frame", 0)
+        frame   = cmd.get("Frame", 0)
         message = cmd.get("Message", "").strip()
         if not message:
             continue
-        # screp uses SenderSlotID for chat, not PlayerID
-        sender_slot = cmd.get("SenderSlotID", cmd.get("PlayerID", -1))
-        pname = player_name_by_id.get(sender_slot, f"Player {sender_slot}")
+        # SenderSlotID identifies the sender; fall back to PlayerID
+        sender = cmd.get("SenderSlotID", cmd.get("PlayerID", -1))
+        pname  = player_name_by_slot.get(sender, f"Player {sender}")
         chat_log.append(ChatMessage(
             time_seconds=_frames_to_seconds(frame),
             player_name=pname,
