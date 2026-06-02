@@ -54,41 +54,74 @@ def _save_fig(fig: plt.Figure, filename: str) -> Path:
 
 
 # ---------------------------------------------------------------------------
-# APM over time chart
+# Combined APM + Supply chart (two stacked panels)
 # ---------------------------------------------------------------------------
 
 def _chart_apm(replay: ReplayData, uid: str) -> Path | None:
-    """Line chart: APM over game time for each player."""
-    players_with_data = [p for p in replay.players if p.apm_timeline]
-    if not players_with_data:
+    """Two-panel chart: APM over time (top) + cumulative supply spent (bottom)."""
+    players = replay.players
+    has_apm     = any(p.apm_timeline for p in players)
+    has_supply  = any(p.supply_timeline for p in players)
+
+    if not has_apm and not has_supply:
         return None
 
-    fig, ax = plt.subplots(figsize=(9, 4))
+    # Decide layout: 1 or 2 panels
+    n_panels = (1 if has_apm else 0) + (1 if has_supply else 0)
+    fig, axes = plt.subplots(n_panels, 1, figsize=(9, 4 * n_panels))
     fig.patch.set_facecolor(BG_COLOR)
+    if n_panels == 1:
+        axes = [axes]
 
-    for i, player in enumerate(players_with_data):
-        color = PLAYER_COLORS[i % len(PLAYER_COLORS)]
-        times = [t for t, _ in player.apm_timeline]
-        apms = [a for _, a in player.apm_timeline]
+    panel = 0
 
-        label = f"{player.name} ({player.race[0]}) — avg {player.apm} APM"
-        ax.plot(times, apms, color=color, linewidth=2, label=label)
-        ax.fill_between(times, apms, alpha=0.08, color=color)
+    # ── APM panel ──────────────────────────────────────────────────────────
+    if has_apm:
+        ax = axes[panel]; panel += 1
+        for i, player in enumerate(players):
+            if not player.apm_timeline:
+                continue
+            color = PLAYER_COLORS[i % len(PLAYER_COLORS)]
+            times = [t for t, _ in player.apm_timeline]
+            apms  = [a for _, a in player.apm_timeline]
+            label = f"{player.name} ({player.race[0]}) — avg {player.apm} APM"
+            ax.plot(times, apms, color=color, linewidth=2, label=label)
+            ax.fill_between(times, apms, alpha=0.08, color=color)
 
-    _apply_base_style(ax, "APM Over Time")
-    ax.set_xlabel("Game Time")
-    ax.set_ylabel("APM")
-    ax.xaxis.set_major_formatter(ticker.FuncFormatter(_minutes_formatter))
-    ax.xaxis.set_major_locator(ticker.MultipleLocator(120))    # tick every 2 minutes
-    ax.set_xlim(left=0)
-    ax.set_ylim(bottom=0)
+        _apply_base_style(ax, "APM Over Time")
+        ax.set_xlabel("Game Time")
+        ax.set_ylabel("APM")
+        ax.xaxis.set_major_formatter(ticker.FuncFormatter(_minutes_formatter))
+        ax.xaxis.set_major_locator(ticker.MultipleLocator(120))
+        ax.set_xlim(left=0)
+        ax.set_ylim(bottom=0)
+        ax.legend(facecolor=ACCENT_COLOR, edgecolor=GRID_COLOR,
+                  labelcolor=TEXT_COLOR, fontsize=9)
 
-    legend = ax.legend(
-        facecolor=ACCENT_COLOR, edgecolor=GRID_COLOR,
-        labelcolor=TEXT_COLOR, fontsize=9,
-    )
+    # ── Supply spent panel ─────────────────────────────────────────────────
+    if has_supply:
+        ax = axes[panel]; panel += 1
+        for i, player in enumerate(players):
+            if not player.supply_timeline:
+                continue
+            color = PLAYER_COLORS[i % len(PLAYER_COLORS)]
+            times   = [t for t, _ in player.supply_timeline]
+            supply  = [s for _, s in player.supply_timeline]
+            label = f"{player.name} ({player.race[0]})"
+            ax.plot(times, supply, color=color, linewidth=2, label=label)
+            ax.fill_between(times, supply, alpha=0.08, color=color)
 
-    fig.tight_layout()
+        _apply_base_style(ax, "Cumulative Supply Spent")
+        ax.set_xlabel("Game Time")
+        ax.set_ylabel("Supply")
+        ax.xaxis.set_major_formatter(ticker.FuncFormatter(_minutes_formatter))
+        ax.xaxis.set_major_locator(ticker.MultipleLocator(120))
+        ax.set_xlim(left=0)
+        ax.set_ylim(bottom=0)
+        ax.legend(facecolor=ACCENT_COLOR, edgecolor=GRID_COLOR,
+                  labelcolor=TEXT_COLOR, fontsize=9)
+
+    fig.tight_layout(pad=2.0)
     return _save_fig(fig, f"apm_{uid}.png")
 
 

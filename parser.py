@@ -18,6 +18,62 @@ from config import SCREP_BINARY, SCREP_TIMEOUT, BUILD_ORDER_MAX_ACTIONS
 
 log = logging.getLogger("sc-replay-bot")
 
+# ---------------------------------------------------------------------------
+# StarCraft BW constants
+# ---------------------------------------------------------------------------
+
+BW_SUPPLY_COSTS: dict[str, float] = {
+    # Terran
+    "SCV": 1, "Marine": 1, "Firebat": 1, "Ghost": 1, "Medic": 1,
+    "Vulture": 2, "Goliath": 2,
+    "Siege Tank (Tank Mode)": 2, "Siege Tank (Siege Mode)": 2,
+    "Wraith": 2, "Science Vessel": 2, "Dropship": 2,
+    "Battlecruiser": 6, "Valkyrie": 2,
+    # Protoss
+    "Probe": 1, "Zealot": 2, "Dragoon": 2,
+    "High Templar": 2, "Dark Templar": 2,
+    "Archon": 4, "Dark Archon": 4,
+    "Reaver": 4, "Observer": 1, "Shuttle": 2,
+    "Scout": 2, "Carrier": 6, "Arbiter": 4, "Corsair": 2,
+    # Zerg
+    "Drone": 1, "Zergling": 0.5, "Hydralisk": 1,
+    "Lurker": 2, "Ultralisk": 4, "Defiler": 2,
+    "Overlord": 0, "Mutalisk": 2, "Scourge": 0.5,
+    "Guardian": 2, "Devourer": 2, "Queen": 2,
+    "Infested Terran": 1,
+}
+
+# Build pattern recognition: (label, ordered_keywords_that_must_appear)
+BUILD_PATTERNS: dict[str, list[tuple[str, list[str]]]] = {
+    "Protoss": [
+        ("Cannon Rush",         ["Forge", "Photon Cannon"]),
+        ("DT Rush",             ["Dark Templar"]),
+        ("Fast Expand",         ["Nexus"]),
+        ("2-Gate Zealot Rush",  ["Gateway", "Gateway", "Zealot", "Zealot"]),
+        ("Storm Expand",        ["Templar Archives", "High Templar"]),
+        ("3-Gate Robo",         ["Robotics Facility"]),
+        ("Carrier Build",       ["Fleet Beacon"]),
+    ],
+    "Zerg": [
+        ("4-Pool Rush",         ["Spawning Pool", "Zergling"]),
+        ("Overpool",            ["Spawning Pool"]),
+        ("2-Hatch Muta",        ["Hatchery", "Spire"]),
+        ("Lurker Expand",       ["Lurker Den"]),
+        ("3-Hatch Hydra",       ["Hatchery", "Hatchery", "Hydralisk Den"]),
+        ("Defiler Play",        ["Defiler Mound"]),
+        ("Fast Expand",         ["Hatchery"]),
+    ],
+    "Terran": [
+        ("Vulture Rush",        ["Factory", "Vulture", "Vulture"]),
+        ("Wraith Opening",      ["Starport", "Wraith"]),
+        ("BC Play",             ["Physics Lab"]),
+        ("Mech Play",           ["Factory", "Machine Shop", "Goliath"]),
+        ("Bio Play",            ["Barracks", "Academy", "Medic"]),
+        ("Fast Expand",         ["Command Center"]),
+        ("Barracks Rush",       ["Barracks", "Marine"]),
+    ],
+}
+
 
 # ---------------------------------------------------------------------------
 # Data models
@@ -39,6 +95,10 @@ class PlayerStats:
     eapm: int
     build_order: list[BuildOrderEntry] = field(default_factory=list)
     apm_timeline: list[tuple[float, int]] = field(default_factory=list)
+    # (time_seconds, cumulative_supply_spent) sampled every 30s
+    supply_timeline: list[tuple[float, float]] = field(default_factory=list)
+    # Auto-detected opening label e.g. "2-Gate Zealot Rush"
+    build_label: str = "Unknown Opening"
 
 
 @dataclass
@@ -177,6 +237,73 @@ def _apm_timeline_from_cmds(commands: list, total_frames: int) -> list[tuple[flo
     return timeline
 
 
+def _supply_timeline_from_cmds(commands: list, total_frames: int) -> list[tuple[float, float]]:
+    """Cumulative supply spent over time, sampled every 30 seconds."""
+    if not commands or total_frames == 0:
+        return []
+
+    SAMPLE_FRAMES = int(30 * FRAMES_PER_SECOND)
+
+    # Collect (frame, supply_cost) for every Train/Morph command
+    events: list[tuple[int, float]] = []
+    for cmd in commands:
+        if not isinstance(cmd, dict):
+            continue
+        cmd_type = _safe_get(cmd, "Type", "Name") or ""
+        if cmd_type not in ("Train", "Unit Morph", "Building Morph", "Morph"):
+            continue
+        unit_name = _safe_get(cmd, "Unit", "Name") or ""
+        cost = BW_SUPPLY_COSTS.get(unit_name, 0)
+        if cost > 0:
+            events.append((cmd.get("Frame", 0), cost))
+
+    if not events:
+        return []
+
+    events.sort(key=lambda x: x[0])
+    timeline: list[tuple[float, float]] = []
+    cumulative = 0.0
+    event_idx = 0
+
+    sample = SAMPLE_FRAMES
+    while sample <= total_frames + SAMPLE_FRAMES:
+        while event_idx < len(events) and events[event_idx][0] <= sample:
+            cumulative += events[event_idx][1]
+            event_idx += 1
+        timeline.append((_frames_to_seconds(sample), cumulative))
+        sample += SAMPLE_FRAMES
+
+    return timeline
+
+
+def _detect_build_label(build_order: list, race: str) -> str:
+    """Match build order against known patterns and return the best label."""
+    if not build_order:
+        return "Unknown Opening"
+
+    unit_sequence = [e.name for e in build_order]
+    patterns = BUILD_PATTERNS.get(race, [])
+
+    for label, keywords in patterns:
+        pos = 0
+        matched = 0
+        for keyword in keywords:
+            # Find keyword in sequence starting from pos
+            found = False
+            for i in range(pos, len(unit_sequence)):
+                if unit_sequence[i] == keyword:
+                    pos = i + 1
+                    matched += 1
+                    found = True
+                    break
+            if not found:
+                break
+        if matched == len(keywords):
+            return label
+
+    return "Standard Opening"
+
+
 def _determine_winner(players_raw: list, flat_cmds: list = None) -> Optional[int]:
     # First try: use the Result field screp may provide
     for i, p in enumerate(players_raw):
@@ -294,8 +421,10 @@ def _parse_screp_json(data: dict) -> ReplayData:
 
         player_id = p.get("ID", i)
         cmds = commands_by_player.get(player_id) or commands_by_player.get(i, [])
-        build_order  = _build_order_from_cmds(cmds)
-        apm_timeline = _apm_timeline_from_cmds(cmds, total_frames)
+        build_order      = _build_order_from_cmds(cmds)
+        apm_timeline     = _apm_timeline_from_cmds(cmds, total_frames)
+        supply_timeline  = _supply_timeline_from_cmds(cmds, total_frames)
+        build_label      = _detect_build_label(build_order, race)
 
         players.append(PlayerStats(
             name=p.get("Name", f"Player {i + 1}"),
@@ -305,6 +434,8 @@ def _parse_screp_json(data: dict) -> ReplayData:
             eapm=eapm,
             build_order=build_order,
             apm_timeline=apm_timeline,
+            supply_timeline=supply_timeline,
+            build_label=build_label,
         ))
 
     matchup = "v".join(races) if len(races) == 2 else "?v?"
