@@ -201,29 +201,35 @@ def _parse_screp_json(data: dict) -> ReplayData:
     winner_idx = _determine_winner(players_raw)
 
     # --- Commands section ---
-    # screp can structure commands as:
-    #   A) a flat list under "Commands" — each dict has a "PlayerID" field
-    #   B) a dict under "Commands" keyed by player index/id
-    #   C) per-player lists nested inside each player object
+    # screp outputs Commands as a flat list of dicts, each with a "PlayerID" field.
+    # The list may also contain non-dict items (e.g. tuples like ('ParseErrCmds', None))
+    # which we skip.
     raw_cmds = data.get("Commands", [])
     commands_by_player: dict[int, list[dict]] = {}
+    flat_cmds: list[dict] = []
 
     if isinstance(raw_cmds, list):
-        for cmd in raw_cmds:
-            if not isinstance(cmd, dict):
-                continue
-            pid = cmd.get("PlayerID", cmd.get("Player", -1))
-            commands_by_player.setdefault(pid, []).append(cmd)
+        for item in raw_cmds:
+            if not isinstance(item, dict):
+                continue  # skip tuples like ('ParseErrCmds', None)
+            pid = item.get("PlayerID", -1)
+            if pid == -1:
+                pid = item.get("Player", -1)
+            commands_by_player.setdefault(pid, []).append(item)
+            flat_cmds.append(item)
 
     elif isinstance(raw_cmds, dict):
-        # Keyed by player id string or index
         for key, cmds in raw_cmds.items():
             try:
                 pid = int(key)
             except (ValueError, TypeError):
                 pid = -1
             if isinstance(cmds, list):
-                commands_by_player[pid] = [c for c in cmds if isinstance(c, dict)]
+                valid = [c for c in cmds if isinstance(c, dict)]
+                commands_by_player[pid] = valid
+                flat_cmds.extend(valid)
+
+    raw_cmds = flat_cmds  # use flat list for chat extraction below
 
     # Computed APM data
     computed = data.get("Computed", {})
@@ -268,6 +274,36 @@ def _parse_screp_json(data: dict) -> ReplayData:
         ))
 
     matchup = "v".join(races) if len(races) == 2 else "?v?"
+
+    # --- Extract chat messages ---
+    # Build a name lookup by both player ID and slot ID
+    player_name_by_id: dict[int, str] = {}
+    for i, p in enumerate(players_raw):
+        if not isinstance(p, dict):
+            continue
+        pid = p.get("ID", i)
+        name = p.get("Name", f"Player {i + 1}")
+        player_name_by_id[pid] = name
+        player_name_by_id[i] = name  # also index as fallback
+
+    chat_log: list[ChatMessage] = []
+    for cmd in (raw_cmds if isinstance(raw_cmds, list) else []):
+        if not isinstance(cmd, dict):
+            continue
+        if _safe_get(cmd, "Type", "Name") != "Chat":
+            continue
+        frame = cmd.get("Frame", 0)
+        message = cmd.get("Message", "").strip()
+        if not message:
+            continue
+        # screp uses SenderSlotID for chat, not PlayerID
+        sender_slot = cmd.get("SenderSlotID", cmd.get("PlayerID", -1))
+        pname = player_name_by_id.get(sender_slot, f"Player {sender_slot}")
+        chat_log.append(ChatMessage(
+            time_seconds=_frames_to_seconds(frame),
+            player_name=pname,
+            message=message,
+        ))
 
     return ReplayData(
         map_name=map_name,
