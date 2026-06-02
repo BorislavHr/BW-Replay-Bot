@@ -125,10 +125,11 @@ def _generate_minimap(replay: ReplayData, rep_path: Path, uid: str) -> Path | No
 
     try:
         result = subprocess.run(
-            [str(SCREP_BINARY), "-map", f"-out={raw_map_path}", str(rep_path)],
+            [str(SCREP_BINARY), "-map", str(rep_path), str(raw_map_path)],
             capture_output=True,
             timeout=30,
         )
+        log.info(f"screp -map exit={result.returncode} stderr={result.stderr[:200]}")
         if not raw_map_path.exists():
             log.warning(f"screp -map produced no file. stderr: {result.stderr[:300]}")
             return None

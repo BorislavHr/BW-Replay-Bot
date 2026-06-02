@@ -297,6 +297,7 @@ def _parse_screp_json(data: dict) -> ReplayData:
         p_type = p.get("Type", {})
         if isinstance(p_type, dict):
             p_type = p_type.get("Name", "")
+        log.info(f"Player {i} full dict keys: {list(p.keys())}")
         log.info(f"Player {i}: name={p.get('Name')} type={p_type!r} race={p.get('Race')} ID={p.get('ID')} SlotID={p.get('SlotID')} TeamID={p.get('TeamID')}")
         # Accept Human, Computer, and empty/unknown types
         # Some screp versions use "Human", others use "h" or leave it blank
