@@ -117,7 +117,7 @@ def _generate_minimap(replay: ReplayData, rep_path: Path, uid: str) -> Path | No
 
     try:
         result = subprocess.run(
-            [str(SCREP_BINARY), f"-map={raw_map_path}", str(rep_path)],
+            [str(SCREP_BINARY), "-map", f"-out={raw_map_path}", str(rep_path)],
             capture_output=True,
             timeout=30,
         )
