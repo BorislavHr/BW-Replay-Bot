@@ -198,15 +198,22 @@ def _apm_timeline_from_cmds(commands: list, total_frames: int) -> list[tuple[flo
 
 
 
-# Command-type classification for hotkey role detection
+# Command-type classification for hotkey role detection.
+#
+# We deliberately only count UNAMBIGUOUS signals. A plain "Right Click" is
+# ignored because it means "move" for army units but "set rally point" for
+# production buildings — counting it would mislabel rallied buildings as army.
 _PRODUCTION_ACTIONS = frozenset({
     "Train", "Build", "Research", "Upgrade",
     "Building Morph", "Unit Morph", "Morph",
 })
+# Commands only mobile combat units can issue:
 _ARMY_ACTIONS = frozenset({
-    "Right Click", "Targeted Order", "Stop", "Hold Position",
-    "Attack", "Attack Move", "Use Magic", "Move",
+    "Stop", "Hold Position", "Attack", "Attack Move", "Use Magic",
 })
+# Targeted Order is army ONLY when the order itself is an attack — a non-attack
+# targeted order can be a rally point onto a unit/resource.
+_ARMY_ORDER_NAMES = frozenset({"Attack1", "AttackMove"})
 
 # Double-tap (camera snap) threshold in frames (~500ms at 23.81 fps)
 _DOUBLE_TAP_FRAMES = 12
@@ -263,7 +270,13 @@ def _analyze_hotkeys(commands: list) -> HotkeyStats:
                 tallies[last_selected_group][1] += 1
             elif ctype in _ARMY_ACTIONS:
                 tallies[last_selected_group][0] += 1
-            # Consume the pairing regardless so we only judge the immediate next cmd
+            elif ctype == "Targeted Order":
+                # Only an attack order counts as army; rally/move orders ignored
+                order_name = _safe_get(cmd, "Order", "Name") or ""
+                if order_name in _ARMY_ORDER_NAMES:
+                    tallies[last_selected_group][0] += 1
+            # "Right Click" and everything else is ambiguous → not counted.
+            # Consume the pairing so we only judge the immediate next command.
             last_selected_group = None
 
     # Resolve each group's role from its tallies
