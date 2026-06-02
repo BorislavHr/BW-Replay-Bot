@@ -233,7 +233,6 @@ def _parse_screp_json(data: dict) -> ReplayData:
     duration_seconds = _frames_to_seconds(total_frames)
 
     players_raw: list = header.get("Players", [])
-    winner_idx = _determine_winner(players_raw, flat_cmds)
 
     # --- Commands section ---
     # screp returns Commands as a dict: {"Cmds": [list of all cmds], "ParseErrCmds": None}
@@ -259,6 +258,8 @@ def _parse_screp_json(data: dict) -> ReplayData:
 
     raw_cmds = flat_cmds  # flat list used for chat extraction below
     log.info(f"Commands by player keys: {list(commands_by_player.keys())}, total cmds: {len(flat_cmds)}")
+
+    winner_idx = _determine_winner(players_raw, flat_cmds)
 
     # Computed APM data
     computed = data.get("Computed", {})
