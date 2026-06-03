@@ -112,23 +112,30 @@ def _chart_hotkeys(replay: ReplayData, uid: str) -> Path | None:
     if n == 1:
         axes = [axes]
 
+    # Display order top-to-bottom: 1,2,3,4,5,6,7,8,9,0 (matches the keyboard row)
+    GROUP_ORDER = [1, 2, 3, 4, 5, 6, 7, 8, 9, 0]
+    group_to_row = {g: row for row, g in enumerate(GROUP_ORDER)}
+
     for ax, player, base_color in zip(axes, players_with_hk, PLAYER_COLORS):
-        assign_frames, assign_groups = [], []
-        select_frames, select_groups = [], []
+        assign_frames, assign_rows = [], []
+        select_frames, select_rows = [], []
         for ev in player.hotkey_events:
             t = ev.frame / FRAMES_PER_SECOND
+            row = group_to_row.get(ev.group)
+            if row is None:
+                continue
             if ev.is_assign:
                 assign_frames.append(t)
-                assign_groups.append(ev.group)
+                assign_rows.append(row)
             else:
                 select_frames.append(t)
-                select_groups.append(ev.group)
+                select_rows.append(row)
 
         # Selects: small semi-transparent dots (the constant tapping)
-        ax.scatter(select_frames, select_groups, s=14, c=base_color,
+        ax.scatter(select_frames, select_rows, s=14, c=base_color,
                    alpha=0.45, marker="o", linewidths=0, zorder=2)
         # Assigns: bright bold squares (the moments a group is (re)bound)
-        ax.scatter(assign_frames, assign_groups, s=70, c=base_color,
+        ax.scatter(assign_frames, assign_rows, s=70, c=base_color,
                    alpha=1.0, marker="s", linewidths=0, zorder=3)
 
         title = (f"{player.name} ({player.race[0]}) — "
@@ -136,10 +143,10 @@ def _chart_hotkeys(replay: ReplayData, uid: str) -> Path | None:
         _apply_base_style(ax, title)
         ax.set_xlabel("Game Time")
         ax.set_yticks(range(10))
-        ax.set_yticklabels([str(g) for g in range(10)])
+        ax.set_yticklabels([str(g) for g in GROUP_ORDER])
         ax.set_ylabel("Control Group")
         ax.set_ylim(-0.5, 9.5)
-        ax.invert_yaxis()   # group 0 at bottom, 1 near top — reads like the keyboard
+        ax.invert_yaxis()   # row 0 (group 1) at the top
         ax.set_xlim(left=0)
         ax.xaxis.set_major_formatter(ticker.FuncFormatter(_minutes_formatter))
         ax.xaxis.set_major_locator(ticker.MultipleLocator(120))

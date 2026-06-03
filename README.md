@@ -1,6 +1,6 @@
 # BW-Replay-Bot 🏭✨🦠
 
-A Discord bot that automatically parses StarCraft: Brood War `.rep` replay files and posts rich embeds with player stats, build orders, APM charts, and in-game chat.
+A Discord bot that automatically parses StarCraft: Brood War `.rep` replay files and posts rich embeds with player stats, build orders, APM charts, hotkey analysis, and in-game chat.
 
 Just upload a `.rep` file in any channel — no commands needed.
 
@@ -11,16 +11,54 @@ Just upload a `.rep` file in any channel — no commands needed.
 - 🗺️ Map name and game duration
 - ⚔️ Matchup (e.g. ZvP)
 - 👤 Player names, races, APM / eAPM, win/loss result
-- 📋 Build order timeline (first 12 key actions per player)
-- 📊 APM-over-time chart (PNG attached to embed)
+- 📋 Build order (first meaningful actions per player)
+- 🎮 Hotkey control-group analysis (Army / Production / Mixed roles + camera snaps)
+- 📊 APM-over-time chart
+- 📈 Hotkey usage timeline chart
 - 💬 In-game chat log with timestamps
+
+---
+
+## How Stats Are Calculated
+
+This section explains every term the bot shows and exactly how it is derived from the replay data.
+
+### APM — Actions Per Minute
+The total number of game commands a player issued, divided by the game duration in minutes. Includes all actions: selecting units, issuing orders, setting hotkeys, casting spells, and building structures. A higher APM generally reflects faster mechanical play, but raw APM alone says nothing about decision quality.
+
+### eAPM — Effective APM
+A filtered version of APM that tries to exclude "spam" — repetitive or redundant actions that don't actually do anything meaningful (e.g. clicking the same unit repeatedly, or issuing move commands to units that are already moving there). eAPM is computed by screp's own algorithm. It is generally considered a more accurate measure of meaningful mechanical output than raw APM.
+
+### Win / Loss
+The bot determines the winner by scanning the replay's command stream for a **Leave Game** command. The player who sent that command is the loser; the other player is the winner. In most BW games the losing player quits before the game formally ends, making this a reliable signal. If screp provides a `Result` field directly (which it does in some replay formats), that is used first; Leave Game detection is the fallback.
+
+### Build Order
+The build order shows the first several significant actions each player took, in chronological order — buildings constructed, units trained, upgrades and research initiated. Workers (Probe, SCV, Drone) are shown up to twice to indicate economic intent without cluttering the list; all other units and buildings are shown up to six times. Each entry is timestamped to the nearest second using the game's frame count and the BW frame rate of **23.81 frames per second** (Fastest speed).
+
+### APM Chart
+A line chart sampled every 60 seconds showing each player's rolling APM across the game. Lets you see at a glance when players ramped up (early aggression, micro-intensive fights) or slowed down (macro phases, waiting for resources).
+
+### Control Group Roles — Army / Production / Mixed
+The bot analyses how each hotkey group (0–9) was used by examining **action pairs**: every time a player selects a group, the very next command they issue reveals what that group contains.
+
+- If the next command is **Train, Build, Research, Upgrade, or Morph** → the group is used for **Production** (buildings/larvae).
+- If the next command is **Stop, Hold Position, Attack, Attack Move, or Use Magic** — or a **Targeted Order** whose order is Attack — → the group is used for **Army** (mobile combat units).
+- **Right Click is intentionally ignored.** It is ambiguous: for army units it means "move here," but for production buildings it means "set rally point." Counting it would mislabel rallied gateways or barracks as Army groups.
+
+At the end of the replay, if one category dominates by a **4-to-1 ratio or more**, the group is labelled **Army** or **Production**. Otherwise it's **Mixed**. Groups that were never selected are omitted entirely.
+
+### Camera Snaps
+A **camera snap** is when a player double-taps a hotkey to jump their camera to that group's location — a standard BW technique for switching view between your army and your base. The bot detects this by looking for two **Select** commands on the **same group** issued within **12 frames of each other (~500 ms)**. The number shown is how many times the player did this across the whole game. High camera snaps generally indicate active multitasking between multiple locations.
+
+### Hotkey Timeline Chart
+A scatter-plot image showing every hotkey press across the game. The X axis is game time; the Y axis shows control groups 0–9. **Bright squares** are Assign/Add commands — the moments a player bound units to a group. **Small dots** are Select commands — the constant recalls as they tap through their groups. The density and rhythm of the dots give a visual sense of the player's multitasking patterns: which groups they rely on, when they set things up, and how consistently they cycle through their control groups.
 
 ---
 
 ## Prerequisites
 
 - Python 3.12+
-- The `screp` binary (Go-based BW replay parser)
+- The `screp` binary (Go-based BW replay parser by [icza](https://github.com/icza/screp))
 - A Discord bot token
 
 ---
@@ -30,7 +68,7 @@ Just upload a `.rep` file in any channel — no commands needed.
 ### 1. Clone the repo
 
 ```bash
-git clone https://github.com/your-username/BW-Replay-Bot.git
+git clone https://github.com/BorislavHr/BW-Replay-Bot.git
 cd BW-Replay-Bot
 ```
 
@@ -46,7 +84,7 @@ pip install -r requirements.txt
 **https://github.com/icza/screp/releases**
 
 | OS | File to download | Rename to |
-|----|-----------------|-----------|
+|----|-----------------|-----------| 
 | Windows | `screp_windows_amd64.exe` | `screp.exe` |
 | Linux | `screp_linux_amd64` | `screp` |
 | macOS | `screp_darwin_amd64` | `screp` |
@@ -115,8 +153,6 @@ Railway gives $5 of free credit/month — more than enough for a Discord bot.
 
 ### Required files for Railway
 
-Make sure these are in your repo:
-
 **`Procfile`**
 ```
 worker: bash build.sh && python bot.py
@@ -144,8 +180,8 @@ chmod +x screp
 BW-Replay-Bot/
 ├── bot.py              # Discord bot — event handling and orchestration
 ├── parser.py           # Calls screp, parses JSON → Python dataclasses
-├── visualizer.py       # Generates APM chart with matplotlib
-├── embed_builder.py    # Builds the Discord embed
+├── visualizer.py       # Generates APM chart and hotkey timeline with matplotlib
+├── embed_builder.py    # Builds the Discord embed(s)
 ├── config.py           # All settings (token, paths, colours, limits)
 ├── requirements.txt    # Python dependencies
 ├── Procfile            # Railway process definition
@@ -188,3 +224,4 @@ nssm start BW-Replay-Bot
 | Charts are blank / missing | Run `pip install matplotlib` |
 | Railway crash on startup | Check the binary is `screp` (not `screp.exe`) and `build.sh` exists |
 | Double reply in Discord | Make sure you're on the latest version of `bot.py` |
+| PyNaCl / davey warnings in logs | Harmless — voice libraries discord.py optionally uses; the bot never uses voice |
