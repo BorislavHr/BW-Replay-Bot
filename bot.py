@@ -104,11 +104,11 @@ async def _handle_replay(message: discord.Message, attachment: discord.Attachmen
             chart_paths = await generate_charts(replay, uid)
             log.info(f"Generated {len(chart_paths)} chart(s)")
 
-            # 4. Build embed + send
-            embed, files = build_embed(replay, chart_paths)
+            # 4. Build embed(s) + send
+            embeds, files = build_embed(replay, chart_paths)
 
             await message.reply(
-                embed=embed,
+                embeds=embeds,
                 files=files,
                 mention_author=False,
             )

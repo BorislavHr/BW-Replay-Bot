@@ -89,15 +89,23 @@ def _build_order_text(player: PlayerStats) -> str:
 # Public builder
 # ---------------------------------------------------------------------------
 
-def build_embed(replay: ReplayData, chart_paths: list[Path]) -> tuple[discord.Embed, list[discord.File]]:
+# Shared URL that ties multiple embeds together so Discord stacks their
+# images into a single embed block (the standard multi-image trick).
+_GALLERY_URL = "https://github.com/BorislavHr/BW-Replay-Bot"
+
+
+def build_embed(replay: ReplayData, chart_paths: list[Path]) -> tuple[list[discord.Embed], list[discord.File]]:
     """
     Returns:
-        embed  — the rich Discord embed
+        embeds — list of discord.Embed objects. The first is the full rich
+                 embed; any extras are image-only embeds sharing the same URL
+                 so Discord stacks all chart images together below the content.
         files  — list of discord.File objects (charts) to attach
     """
     embed = discord.Embed(
         title=f"📺  Replay Analysis — {replay.matchup}",
         colour=_matchup_color(replay.matchup),
+        url=_GALLERY_URL,
     )
 
     # ── Header row ──────────────────────────────────────────────────────────
@@ -160,17 +168,26 @@ def build_embed(replay: ReplayData, chart_paths: list[Path]) -> tuple[discord.Em
     else:
         embed.add_field(name="💬  In-Game Chat", value="*No messages*", inline=False)
 
-    # ── Attach charts ─────────────────────────────────────────────────────────
+    embed.set_footer(text="Powered by screp • StarCraft: Brood War Replay Bot")
+
+    # ── Attach charts as stacked images BELOW the embed content ──────────────
+    # Discord shows one image per embed. To stack several under one message,
+    # we make additional bare embeds that share the same `url`; Discord then
+    # groups them and renders their images together beneath the main embed.
     files: list[discord.File] = []
+    embeds: list[discord.Embed] = [embed]
 
     if chart_paths:
+        # First chart goes on the main embed (renders below all the fields)
         first = chart_paths[0]
         files.append(discord.File(first, filename=first.name))
         embed.set_image(url=f"attachment://{first.name}")
 
+        # Each remaining chart gets its own image-only embed with the same URL
         for path in chart_paths[1:]:
             files.append(discord.File(path, filename=path.name))
+            extra = discord.Embed(url=_GALLERY_URL, colour=_matchup_color(replay.matchup))
+            extra.set_image(url=f"attachment://{path.name}")
+            embeds.append(extra)
 
-    embed.set_footer(text="Powered by screp • StarCraft: Brood War Replay Bot")
-
-    return embed, files
+    return embeds, files
